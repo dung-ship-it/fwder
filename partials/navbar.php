@@ -35,6 +35,12 @@ $_dir     = basename(dirname($_SERVER['PHP_SELF']));
                         <i class="bi bi-people"></i> Khách hàng
                     </a>
                 </li>
+                <li class="nav-item">
+                    <a class="nav-link <?php echo ($_dir === 'quotations') ? 'active' : ''; ?>"
+                       href="/forwarder/quotations/index.php">
+                        <i class="bi bi-file-earmark-text"></i> Báo Giá
+                    </a>
+                </li>
                 <?php endif; ?>
 
                 <!-- Lô hàng — tất cả đều thấy -->
