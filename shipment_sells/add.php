@@ -7,7 +7,8 @@ if ($shipment_id == 0) { header("Location: ../shipments/index.php"); exit(); }
 
 $conn = getDBConnection();
 
-$stmt = $conn->prepare("SELECT job_no FROM shipments WHERE id = ?");
+// ── Lấy thêm pol, pod, vessel_flight để build nội dung AFF ──
+$stmt = $conn->prepare("SELECT job_no, pol, pod, vessel_flight FROM shipments WHERE id = ?");
 $stmt->bind_param("i", $shipment_id);
 $stmt->execute();
 $shipment = $stmt->get_result()->fetch_assoc();
@@ -15,16 +16,16 @@ if (!$shipment) { header("Location: ../shipments/index.php"); exit(); }
 
 // Load arrival_notice_charges để hiển thị modal
 $anCharges = $conn->query(
-    "SELECT anc.*, 
-            COALESCE(cc.id, 0) AS cost_code_id_found,
-            COALESCE(cc.code, '') AS cc_code
-     FROM arrival_notice_charges anc
-     LEFT JOIN cost_codes cc ON cc.code = anc.cost_code
-     WHERE anc.shipment_id = $shipment_id
+    "SELECT anc.*, \
+            COALESCE(cc.id, 0) AS cost_code_id_found,\
+            COALESCE(cc.code, '') AS cc_code\
+     FROM arrival_notice_charges anc\
+     LEFT JOIN cost_codes cc ON cc.code = anc.cost_code\
+     WHERE anc.shipment_id = $shipment_id\
      ORDER BY anc.charge_group, anc.sort_order"
 )->fetch_all(MYSQLI_ASSOC);
 
-$error = '';
+$error = '';  
 
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
@@ -32,12 +33,12 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     if (isset($_POST['import_arrival'])) {
         $selected = $_POST['selected_rows'] ?? [];
         if (empty($selected)) {
-            $error = 'Vui lòng chọn ít nh���t 1 dòng!';
+            $error = 'Vui lòng chọn ít nhất 1 dòng!';
         } else {
-            $insStmt = $conn->prepare("
-                INSERT INTO shipment_sells
-                    (shipment_id, cost_code_id, quantity, unit_price, vat, total_amount, notes, created_by)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            $insStmt = $conn->prepare("\
+                INSERT INTO shipment_sells\
+                    (shipment_id, cost_code_id, quantity, unit_price, vat, total_amount, notes, created_by)\
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)\
             ");
             foreach ($selected as $anId) {
                 $anId = intval($anId);
@@ -84,10 +85,10 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         if ($cost_code_id == 0) {
             $error = 'Vui lòng chọn mã chi phí!';
         } else {
-            $stmt = $conn->prepare("
-                INSERT INTO shipment_sells
-                    (shipment_id, cost_code_id, quantity, unit_price, vat, is_pob, total_amount, notes, created_by)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            $stmt = $conn->prepare("\
+                INSERT INTO shipment_sells\
+                    (shipment_id, cost_code_id, quantity, unit_price, vat, is_pob, total_amount, notes, created_by)\
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)\
             ");
             $stmt->bind_param("iidddidsi",
                 $shipment_id, $cost_code_id,
@@ -111,6 +112,11 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 $anForeign  = array_values(array_filter($anCharges, fn($r) => $r['charge_group'] === 'foreign'));
 $anLocal    = array_values(array_filter($anCharges, fn($r) => $r['charge_group'] === 'local'));
 $hasArrival = count($anCharges) > 0;
+
+// Dữ liệu lô hàng truyền xuống JS cho AFF/AFF+EXW
+$jsPol          = addslashes($shipment['pol']           ?? '');
+$jsPod          = addslashes($shipment['pod']           ?? '');
+$jsVesselFlight = addslashes($shipment['vessel_flight'] ?? '');
 
 $conn->close();
 ?>
@@ -379,6 +385,23 @@ $conn->close();
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 <script>
+// ── Dữ liệu lô hàng (dùng cho AFF / AFF+EXW) ──────────────────
+const SHIP_POL           = '<?php echo $jsPol; ?>';
+const SHIP_POD           = '<?php echo $jsPod; ?>';
+const SHIP_VESSEL_FLIGHT = '<?php echo $jsVesselFlight; ?>';
+
+function buildAffDescription(code) {
+    const pol    = SHIP_POL           || '(POL)';
+    const pod    = SHIP_POD           || '(POD)';
+    const vessel = SHIP_VESSEL_FLIGHT || '...';
+    let desc = 'Phí Vận Chuyển Quốc Tế Từ ' + pol + ' đến ' + pod
+             + ' Trên chuyến Tàu/Máy bay số: ' + vessel;
+    if (code === 'AFF+EXW') {
+        desc += ' và Phí tại đầu nước ngoài (' + pol + ')';
+    }
+    return desc;
+}
+
 // ── Nhập thủ công ──────────────────────────────────────────────
 document.getElementById('costCode').addEventListener('blur', function () {
     const code = this.value.trim().toUpperCase();
@@ -387,8 +410,13 @@ document.getElementById('costCode').addEventListener('blur', function () {
         .then(r => r.json())
         .then(data => {
             if (data.success) {
-                document.getElementById('costCodeId').value      = data.id;
-                document.getElementById('costDescription').value = data.description;
+                document.getElementById('costCodeId').value = data.id;
+                // AFF / AFF+EXW: ghi đè description bằng chuỗi động
+                if (code === 'AFF' || code === 'AFF+EXW') {
+                    document.getElementById('costDescription').value = buildAffDescription(code);
+                } else {
+                    document.getElementById('costDescription').value = data.description;
+                }
                 checkTruckingCode(code);
             } else {
                 alert('Không tìm thấy mã chi phí: ' + code);
